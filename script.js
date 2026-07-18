@@ -164,18 +164,26 @@
         if (conn && conn.open) {
             conn.send({ type: 'timeout', color: color });
         }
-        const winnerName = (color === 'w') ? 'الأسود' : 'الأبيض';
-        const loserName = (color === 'w') ? 'الأبيض' : 'الأسود';
-        showResult('فاز ' + winnerName, 'انتهى وقت لاعب ' + loserName + '.', true);
+        
+        // لو وقتي أنا اللي خلص (خسرت بالوقت)
+        if (color === myColor) {
+            showResult('وقتك خلص يا نِرم! ⏰', ' المرة الجاية ابقى العب أسرع.', true);
+        } else {
+           showResult('وقت الخصم خلص! 🏆', 'عاش ياوحش، كسبت بالوقت .', true);
+        }
     }
 
     function handleOpponentTimeout(color) {
         if (gameEnded) return;
         stopClock();
         localStorage.removeItem(STORAGE_KEY);
-        const winnerName = (color === 'w') ? 'الأسود' : 'الأبيض';
-        const loserName = (color === 'w') ? 'الأبيض' : 'الأسود';
-        showResult('فاز ' + winnerName, 'انتهى وقت لاعب ' + loserName + '.', true);
+        
+        // لو لون الخصم هو اللي وقته خلص (أنا كسبت)
+        if (color === opponentColor) {
+            showResult('وقت الخصم خلص! 🏆', 'عاش ياوحش، كسبت بالوقت .', true);
+        } else {
+            showResult('وقتك خلص يا نِرم! ⏰', ' المرة الجاية ابقى العب أسرع.', true);
+        }
     }
 
     function processTurnIncrement() {
@@ -261,14 +269,20 @@
     function checkGameEnd() {
         if (game.in_checkmate()) {
             localStorage.removeItem(STORAGE_KEY);
-            const winner = (activeTurn === 'w') ? 'الأسود' : 'الأبيض';
-            showResult('كِش مَلك! فاز ' + winner, 'انتهت المباراة بنصر حاسم.', true);
+            
+            // تحديد مين الكسبان ومين الخسران بناءً على الدور الحالي
+            // بما إن الماتش خلص بكش مات في نفس الدور، فاللي عليه الدور هو اللي خسر
+            if (activeTurn === myColor) {
+                showResult('كِش مات.. ابلع يانرم!.', true);
+            } else {
+                showResult('كِش مات.. عاش ياوحش!', true);
+            }
         } else if (game.in_draw()) {
             localStorage.removeItem(STORAGE_KEY);
-            showResult('تعادل', 'تعادل بسبب مخنوق (Stalemate) أو عدم كفاية القطع.', true);
+            showResult('حوارها تعادل يا رجالة 🤝', 'خلصت تعادل بسبب مخنوق (Stalemate) أو مفيش قطع تكفي تموت.', true);
         } else if (game.in_stalemate && game.in_stalemate()) {
             localStorage.removeItem(STORAGE_KEY);
-            showResult('تعادل', 'ملك مخنوق (Stalemate).', true);
+            showResult('ملك مخنوق.. تعادل 🔄', 'الملك اتحبس ومفيش نقلات قانونية، سلملي على الفوز.', true);
         }
     }
 
@@ -332,16 +346,14 @@
         document.getElementById('resignConfirmVeil').classList.remove('show');
         localStorage.removeItem(STORAGE_KEY);
         if (conn && conn.open) conn.send({ type: 'resign' });
-        showResult('لقد انسحبت', 'فاز خصمك بالمباراة.', true);
+        showResult('انسحبت؟ ابلع يانرم! 🏳️', 'ريحت الخصم بدري بدري كدا ليه.', true);
     };
 
-    // === أضف هذه الدالة هنا ليستقبل الخصم إشعار الانسحاب ===
     function handleOpponentResign() {
         if (gameEnded) return;
         stopClock();
         localStorage.removeItem(STORAGE_KEY);
-        const winnerName = (myColor === 'w') ? 'الأبيض (أنت)' : 'الأسود (أنت)';
-        showResult('فزت بالمباراة! 🎉', 'انسحب خصمك من اللعبة.', true);
+        showResult(' جاب ورا وانسحب! 🎉🏆', 'كسبت بكاريزمتك ياملك.', true);
     }
 
     window.cancelResign = function() {
@@ -371,7 +383,7 @@
         document.getElementById('drawRequestVeil').classList.remove('show');
         localStorage.removeItem(STORAGE_KEY);
         if (conn && conn.open) conn.send({ type: 'draw_accept' });
-        showResult('تعادل باتفاق الطرفين', 'تم إنهاء الجيم بالصلح الودي.', true);
+        showResult('تعادل حِبي حِبي 🤝', 'خلصت بالصلح والراضي كسبان.', true);
     };
 
     window.declineDrawOffer = function() {
@@ -408,7 +420,6 @@
         checkGameEnd();
     }
 
-    // دالة لمزامنة وإرسال الحالة الكاملة عند عودة لاعب من الـ Refresh
     function sendFullSyncState() {
         if (conn && conn.open) {
             conn.send({
@@ -446,11 +457,9 @@
         pill.classList.toggle('connected', isConnected);
         text.textContent = isConnected ? 'متصل' : 'جاري الاتصال…';
         
-        // إخفاء ستار الانتظار لو متصل
         document.getElementById('waitingVeil').classList.toggle('show', isHost && !isConnected);
         
         if (isConnected) {
-            // لو رجعنا من ريفريش، نطلب مزامنة الحالة مع الخصم فوراً
             sendFullSyncState();
             startClock();
         } else {
@@ -480,14 +489,13 @@
             } else if (data.type === 'draw_offer') {
                 if (!gameEnded) document.getElementById('drawRequestVeil').classList.add('show');
             } else if (data.type === 'draw_accept') {
-                showResult('تعادل باتفاق الطرفين', 'قبل خصمك عرض التعادل.', true);
+                showResult('قبل التعادل 🤝', 'تم إنهاء الجيم بالصلح الودي البسيط.', true);
             } else if (data.type === 'draw_decline') {
                 alert('رفض الخصم عرض التعادل، كمل لعب!');
             }
         });
         conn.on('close', () => {
             setConnected(false);
-            // لو الجيم لسه شغال في الـ storage مش هنظهر شاشة الخطأ فوراً، هندي فرصة للخصم يرجع ريفريش
             if (!localStorage.getItem(STORAGE_KEY)) {
                 showError('قطع خصمك الاتصال باللعبة.');
             } else {
@@ -515,14 +523,12 @@
         }
         peer.on('error', (err) => {
             console.error(err);
-            // لو الهوست بيعمل ريفريش، الـ Peer القديم بيموت، فبنحاول نعيد المحاولة بعد ثانيتين بدل ما نقفل بـ Error
             setTimeout(() => {
                 if (!conn || !conn.open) initPeer();
             }, 2000);
         });
     }
 
-    // محاولة استعادة الحالة القديمة قبل بناء الرقعة
     const hasSavedGame = loadGameFromStorage();
 
     board = Chessboard('myBoard', {
