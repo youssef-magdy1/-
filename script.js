@@ -10,7 +10,6 @@
         return;
     }
 
-    // مفتاح فريد لحفظ اللعبة الحالية في الـ localStorage بناءً على الـ hostId
     const STORAGE_KEY = 'chess_game_state_' + hostId;
 
     const game = new Chess();
@@ -28,8 +27,11 @@
     let turnMoveCount = 0;
     let gameEnded = false;
 
-    const BASE_TIME = 180;
-    const INCREMENT = 2;
+    const timeParamMinutes = parseFloat(params.get('time'));
+    const incParamSeconds = parseFloat(params.get('inc'));
+
+    const BASE_TIME = (!isNaN(timeParamMinutes) && timeParamMinutes > 0) ? timeParamMinutes * 60 : 180;
+    const INCREMENT = (!isNaN(incParamSeconds) && incParamSeconds >= 0) ? incParamSeconds : 2;
     const GRACE_TIME = 10;
 
     let clocks = { w: BASE_TIME, b: BASE_TIME };
@@ -39,7 +41,6 @@
     let clockInterval = null;
     let lastTick = null;
 
-    // دالة لحفظ حالة اللعبة الحالية في متصفح اللاعب
     function saveGameToStorage() {
         if (gameEnded) {
             localStorage.removeItem(STORAGE_KEY);
@@ -58,7 +59,6 @@
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     }
 
-    // دالة لمحاولة استعادة اللعبة من الـ Storage عند الـ Refresh
     function loadGameFromStorage() {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (!saved) return false;
@@ -152,8 +152,6 @@
             return;
         }
         updateClockDisplay();
-        
-        // حفظ الوقت بشكل دوري أثناء الحساب لحمايته عند الـ Refresh
         saveGameToStorage();
     }
 
@@ -164,26 +162,18 @@
         if (conn && conn.open) {
             conn.send({ type: 'timeout', color: color });
         }
-        
-        // لو وقتي أنا اللي خلص (خسرت بالوقت)
-        if (color === myColor) {
-            showResult('وقتك خلص يا نِرم! ⏰', ' المرة الجاية ابقى العب أسرع.', true);
-        } else {
-           showResult('وقت الخصم خلص! 🏆', 'عاش ياوحش، كسبت بالوقت .', true);
-        }
+        const winnerName = (color === 'w') ? 'الأسود' : 'الأبيض';
+        const loserName = (color === 'w') ? 'الأبيض' : 'الأسود';
+        showResult('فاز ' + winnerName, 'انتهى وقت لاعب ' + loserName + '.', true);
     }
 
     function handleOpponentTimeout(color) {
         if (gameEnded) return;
         stopClock();
         localStorage.removeItem(STORAGE_KEY);
-        
-        // لو لون الخصم هو اللي وقته خلص (أنا كسبت)
-        if (color === opponentColor) {
-            showResult('وقت الخصم خلص! 🏆', 'عاش ياوحش، كسبت بالوقت .', true);
-        } else {
-            showResult('وقتك خلص يا نِرم! ⏰', ' المرة الجاية ابقى العب أسرع.', true);
-        }
+        const winnerName = (color === 'w') ? 'الأسود' : 'الأبيض';
+        const loserName = (color === 'w') ? 'الأبيض' : 'الأسود';
+        showResult('فاز ' + winnerName, 'انتهى وقت لاعب ' + loserName + '.', true);
     }
 
     function processTurnIncrement() {
@@ -212,6 +202,8 @@
         document.getElementById('pip2').classList.toggle('done', turnMoveCount >= 2);
     }
 
+    let selectedSquare = null;
+
     function removeGreySquares() {
         $('#myBoard .square-55d63').css('background', '');
     }
@@ -221,24 +213,32 @@
         $sq.css('background', $sq.hasClass('black-3c85d') ? '#5c5346' : '#7a6f5d');
     }
 
-    const onDragStart = function(source, piece) {
-        if (game.game_over() || gameEnded) return false;
-        if (!conn || !conn.open) return false;
-        if (activeTurn !== myColor) return false;
-        if ((myColor === 'w' && piece.search(/^b/) !== -1) ||
-            (myColor === 'b' && piece.search(/^w/) !== -1)) {
-            return false;
-        }
-    };
+    function highlightSelected(square) {
+        greySquare(square);
+        const moves = game.moves({ square: square, verbose: true });
+        moves.forEach(m => greySquare(m.to));
+    }
 
-    const onDrop = function(source, target) {
+    function clearSelection() {
+        selectedSquare = null;
         removeGreySquares();
+    }
+
+    function isOwnPiece(square) {
+        const piece = game.get(square);
+        if (!piece) return false;
+        return piece.color === myColor;
+    }
+
+    // ينفذ نقلة من source الى target سواء جايه من سحب او دوسة، ويرجع:
+    // 'illegal' لو النقلة مش مسموحة، 'promotion' لو محتاجة ترقية، 'done' لو اتنفذت وبُعتت للخصم
+    function performMove(source, target) {
         const move = game.move({ from: source, to: target, promotion: 'q' });
-        if (move === null) return 'snapback';
+        if (move === null) return 'illegal';
 
         if (turnMoveCount === 0 && game.in_check()) {
             game.undo();
-            return 'snapback';
+            return 'illegal';
         }
 
         if (move.flags.includes('p')) {
@@ -246,15 +246,58 @@
             promoColor = activeTurn;
             game.undo();
             showPromotionBox();
-            return 'snapback';
+            return 'promotion';
         }
 
         sendMove({ from: source, to: target, promotion: null });
         processTurnIncrement();
         checkGameEnd();
-    };
+        return 'done';
+    }
+
+    function getSquareFromElement(el) {
+        if (!el || !el.classList) return null;
+        for (const c of el.classList) {
+            if (/^square-[a-h][1-8]$/.test(c)) return c.replace('square-', '');
+        }
+        return null;
+    }
+
+    function onSquareTap(square) {
+        if (game.game_over() || gameEnded) return;
+        if (!conn || !conn.open) return;
+        if (activeTurn !== myColor) return;
+
+        if (!selectedSquare) {
+            if (isOwnPiece(square)) {
+                selectedSquare = square;
+                highlightSelected(square);
+            }
+            return;
+        }
+
+        if (square === selectedSquare) {
+            clearSelection();
+            return;
+        }
+
+        if (isOwnPiece(square)) {
+            removeGreySquares();
+            selectedSquare = square;
+            highlightSelected(square);
+            return;
+        }
+
+        const source = selectedSquare;
+        clearSelection();
+        const result = performMove(source, square);
+        if (result === 'done') {
+            board.position(game.fen());
+        }
+    }
 
     const onMouseoverSquare = function(square) {
+        if (selectedSquare) return;
         if (activeTurn !== myColor) return;
         const moves = game.moves({ square: square, verbose: true });
         if (!moves.length) return;
@@ -262,27 +305,17 @@
         moves.forEach(m => greySquare(m.to));
     };
 
-    const onSnapEnd = function() {
-        board.position(game.fen());
-    };
-
     function checkGameEnd() {
         if (game.in_checkmate()) {
             localStorage.removeItem(STORAGE_KEY);
-            
-            // تحديد مين الكسبان ومين الخسران بناءً على الدور الحالي
-            // بما إن الماتش خلص بكش مات في نفس الدور، فاللي عليه الدور هو اللي خسر
-            if (activeTurn === myColor) {
-                showResult('كِش مات.. ابلع يانرم!.', true);
-            } else {
-                showResult('كِش مات.. عاش ياوحش!', true);
-            }
+            const winner = (activeTurn === 'w') ? 'الأسود' : 'الأبيض';
+            showResult('كِش مَلك! فاز ' + winner, 'انتهت المباراة بنصر حاسم.', true);
         } else if (game.in_draw()) {
             localStorage.removeItem(STORAGE_KEY);
-            showResult('حوارها تعادل يا رجالة 🤝', 'خلصت تعادل بسبب مخنوق (Stalemate) أو مفيش قطع تكفي تموت.', true);
+            showResult('تعادل', 'تعادل بسبب مخنوق (Stalemate) أو عدم كفاية القطع.', true);
         } else if (game.in_stalemate && game.in_stalemate()) {
             localStorage.removeItem(STORAGE_KEY);
-            showResult('ملك مخنوق.. تعادل 🔄', 'الملك اتحبس ومفيش نقلات قانونية، سلملي على الفوز.', true);
+            showResult('تعادل', 'ملك مخنوق (Stalemate).', true);
         }
     }
 
@@ -346,14 +379,15 @@
         document.getElementById('resignConfirmVeil').classList.remove('show');
         localStorage.removeItem(STORAGE_KEY);
         if (conn && conn.open) conn.send({ type: 'resign' });
-        showResult('انسحبت؟ ابلع يانرم! 🏳️', 'ريحت الخصم بدري بدري كدا ليه.', true);
+        showResult('لقد انسحبت', 'فاز خصمك بالمباراة.', true);
     };
 
     function handleOpponentResign() {
         if (gameEnded) return;
         stopClock();
         localStorage.removeItem(STORAGE_KEY);
-        showResult(' جاب ورا وانسحب! 🎉🏆', 'كسبت بكاريزمتك ياملك.', true);
+        const winnerName = (myColor === 'w') ? 'الأبيض (أنت)' : 'الأسود (أنت)';
+        showResult('فزت بالمباراة! 🎉', 'انسحب خصمك من اللعبة.', true);
     }
 
     window.cancelResign = function() {
@@ -383,7 +417,7 @@
         document.getElementById('drawRequestVeil').classList.remove('show');
         localStorage.removeItem(STORAGE_KEY);
         if (conn && conn.open) conn.send({ type: 'draw_accept' });
-        showResult('تعادل حِبي حِبي 🤝', 'خلصت بالصلح والراضي كسبان.', true);
+        showResult('تعادل باتفاق الطرفين', 'تم إنهاء الجيم بالصلح الودي.', true);
     };
 
     window.declineDrawOffer = function() {
@@ -392,21 +426,68 @@
     };
 
     window.promotePiece = function(piece) {
-        const move = game.move({ from: pendingPromotion.source, to: pendingPromotion.target, promotion: piece });
-        if (turnMoveCount === 0 && game.in_check()) {
-            game.undo();
+        if (!pendingPromotion) return;
+
+        const move = game.move({ 
+            from: pendingPromotion.source, 
+            to: pendingPromotion.target, 
+            promotion: piece 
+        });
+
+        if (!move) {
             pendingPromotion = null;
             document.getElementById('promotionBox').style.display = 'none';
             board.position(game.fen());
             return;
         }
-        sendMove({ from: pendingPromotion.source, to: pendingPromotion.target, promotion: piece });
-        pendingPromotion = null;
+
+        if (turnMoveCount === 0 && game.in_check()) {
+            game.undo(); // التراجع عن النقلة
+            pendingPromotion = null;
+            document.getElementById('promotionBox').style.display = 'none';
+            board.position(game.fen()); // إرجاع القطعة لمكانها على الرقعة
+            return;
+        }
+
         document.getElementById('promotionBox').style.display = 'none';
         board.position(game.fen());
+
+        sendMove({ 
+            from: pendingPromotion.source, 
+            to: pendingPromotion.target, 
+            promotion: piece 
+        });
+
+        pendingPromotion = null;
         processTurnIncrement();
         checkGameEnd();
     };
+
+    let promotionBoxJustOpened = false;
+
+    function showPromotionBox() {
+        const piecePrefix = promoColor === 'w' ? 'w' : 'b';
+        document.getElementById('promo-q').src = PIECE_THEME.replace('{piece}', piecePrefix + 'Q');
+        document.getElementById('promo-r').src = PIECE_THEME.replace('{piece}', piecePrefix + 'R');
+        document.getElementById('promo-b').src = PIECE_THEME.replace('{piece}', piecePrefix + 'B');
+        document.getElementById('promo-n').src = PIECE_THEME.replace('{piece}', piecePrefix + 'N');
+        document.getElementById('promotionBox').style.display = 'block';
+        promotionBoxJustOpened = true;
+        setTimeout(() => { promotionBoxJustOpened = false; }, 100);
+    }
+
+    function hidePromotionBox() {
+        document.getElementById('promotionBox').style.display = 'none';
+        pendingPromotion = null;
+    }
+
+    document.addEventListener('click', function(e) {
+        if (promotionBoxJustOpened) return;
+        const box = document.getElementById('promotionBox');
+        if (box.style.display === 'block' && !box.contains(e.target)) {
+            hidePromotionBox();
+        }
+    });
 
     function sendMove(moveMsg) {
         if (conn && conn.open) conn.send({ type: 'move', move: moveMsg });
@@ -489,7 +570,7 @@
             } else if (data.type === 'draw_offer') {
                 if (!gameEnded) document.getElementById('drawRequestVeil').classList.add('show');
             } else if (data.type === 'draw_accept') {
-                showResult('قبل التعادل 🤝', 'تم إنهاء الجيم بالصلح الودي البسيط.', true);
+                showResult('تعادل باتفاق الطرفين', 'قبل خصمك عرض التعادل.', true);
             } else if (data.type === 'draw_decline') {
                 alert('رفض الخصم عرض التعادل، كمل لعب!');
             }
@@ -532,18 +613,23 @@
     const hasSavedGame = loadGameFromStorage();
 
     board = Chessboard('myBoard', {
-        draggable: true,
+        draggable: false,
         position: hasSavedGame ? game.fen() : 'start',
         orientation: (myColor === 'w') ? 'white' : 'black',
         pieceTheme: PIECE_THEME,
-        onDragStart: onDragStart,
-        onDrop: onDrop,
-        onMouseoutSquare: removeGreySquares,
-        onMouseoverSquare: onMouseoverSquare,
-        onSnapEnd: onSnapEnd
+        onMouseoutSquare: function() { if (!selectedSquare) removeGreySquares(); },
+        onMouseoverSquare: onMouseoverSquare
     });
 
     window.addEventListener('resize', () => board.resize());
+
+    document.getElementById('myBoard').addEventListener('click', function(e) {
+        const squareEl = e.target.closest('[class*="square-"]');
+        if (!squareEl) return;
+        const square = getSquareFromElement(squareEl);
+        if (!square) return;
+        onSquareTap(square);
+    });
 
     updateTurnStrip();
     updateClockDisplay();
