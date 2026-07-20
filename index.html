@@ -120,6 +120,78 @@
     font-weight:600;
   }
 
+  .time-settings{
+    display:flex;
+    justify-content:center;
+    gap:16px;
+    margin-bottom:32px;
+    flex-wrap:wrap;
+  }
+
+  .time-field{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    background:var(--ink-soft);
+    border:1px solid var(--line);
+    border-radius:4px;
+    padding:12px 16px;
+    min-width:140px;
+  }
+
+  .time-field label{
+    font-size:12px;
+    font-weight:600;
+    letter-spacing:0.03em;
+    color:var(--brass);
+    margin-bottom:8px;
+  }
+
+  .time-field input{
+    width:100%;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:16px;
+    color:var(--bone);
+    background:var(--ink);
+    border:1px solid var(--line);
+    border-radius:3px;
+    padding:8px 10px;
+    direction: ltr;
+    text-align:center;
+  }
+
+  .time-field input:focus{
+    outline:none;
+    border-color:var(--brass-bright);
+  }
+
+  .time-field input:disabled{
+    opacity:0.5;
+  }
+
+  .presets{
+    display:flex;
+    justify-content:center;
+    gap:8px;
+    margin-bottom:28px;
+    flex-wrap:wrap;
+  }
+
+  .presets button{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    color:var(--slate);
+    background:transparent;
+    border:1px solid var(--line);
+    border-radius:20px;
+    padding:6px 16px;
+    cursor:pointer;
+    transition:border-color 0.15s ease, color 0.15s ease;
+  }
+  .presets button:hover{ border-color:var(--brass-bright); color:var(--bone); }
+  .presets button.active{ border-color:var(--brass-bright); color:var(--brass-bright); }
+  .presets button:disabled{ opacity:0.5; cursor:default; }
+
   button.cta{
     font-family:'Cairo',sans-serif;
     font-weight:600;
@@ -228,6 +300,24 @@
     <div class="cell">اعمل لينك والعب</div>
   </div>
 
+  <div class="presets" id="presets">
+    <button type="button" data-time="1" data-inc="1">1+1</button>
+    <button type="button" data-time="3" data-inc="2" class="active">3+2</button>
+    <button type="button" data-time="5" data-inc="3">5+3</button>
+    <button type="button" data-time="10" data-inc="5">10+5</button>
+  </div>
+
+  <div class="time-settings">
+    <div class="time-field">
+      <label for="timeInput">الوقت (دقايق)</label>
+      <input type="number" id="timeInput" min="1" max="60" step="1" value="3">
+    </div>
+    <div class="time-field">
+      <label for="incInput">الإضافة (ثواني)</label>
+      <input type="number" id="incInput" min="0" max="60" step="1" value="2">
+    </div>
+  </div>
+
   <button class="cta" id="createBtn">ودي يابويا </button>
   <div class="status-line" id="statusLine"></div>
 
@@ -250,12 +340,37 @@
   const linkInput = document.getElementById('linkInput');
   const copyBtn = document.getElementById('copyBtn');
   const enterBtn = document.getElementById('enterBtn');
+  const timeInput = document.getElementById('timeInput');
+  const incInput = document.getElementById('incInput');
+  const presetButtons = document.querySelectorAll('#presets button');
 
   let boardUrl = null;
 
+  presetButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      timeInput.value = btn.dataset.time;
+      incInput.value = btn.dataset.inc;
+      presetButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+
+  // لو المستخدم عدّل الأرقام يدويًا، نشيل التظليل عن البريسِتس
+  [timeInput, incInput].forEach(input => {
+    input.addEventListener('input', () => {
+      presetButtons.forEach(b => b.classList.remove('active'));
+    });
+  });
+
   createBtn.addEventListener('click', () => {
     createBtn.disabled = true;
+    timeInput.disabled = true;
+    incInput.disabled = true;
+    presetButtons.forEach(b => b.disabled = true);
     statusLine.textContent = 'يتم...  ';
+
+    const minutes = Math.min(60, Math.max(1, parseInt(timeInput.value, 10) || 3));
+    const increment = Math.min(60, Math.max(0, parseInt(incInput.value, 10) || 0));
 
     const peer = new Peer();
 
@@ -263,9 +378,16 @@
       const gameUrl = new URL('game.html', window.location.href);
       gameUrl.searchParams.set('host', id);
       gameUrl.searchParams.set('as', 'host');
+      gameUrl.searchParams.set('time', minutes);
+      gameUrl.searchParams.set('inc', increment);
       boardUrl = gameUrl.toString();
 
-      linkInput.value = new URL('game.html', window.location.href).toString() + '?host=' + id;
+      const joinUrl = new URL('game.html', window.location.href);
+      joinUrl.searchParams.set('host', id);
+      joinUrl.searchParams.set('time', minutes);
+      joinUrl.searchParams.set('inc', increment);
+
+      linkInput.value = joinUrl.toString();
       linkCard.classList.add('show');
       statusLine.textContent = 'الرابط جاهز — ابعت وخش.';
       createBtn.textContent = 'ضن ';
@@ -278,6 +400,9 @@
       console.error(err);
       statusLine.textContent = 'فشل الاتصال. تحقق من الشبكة وحاول مجدداً.';
       createBtn.disabled = false;
+      timeInput.disabled = false;
+      incInput.disabled = false;
+      presetButtons.forEach(b => b.disabled = false);
       createBtn.textContent = 'إنشاء لعبة';
     });
   });
